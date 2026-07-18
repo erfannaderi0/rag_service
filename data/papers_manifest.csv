@@ -1,0 +1,21 @@
+id,title,authors,arxiv_url
+0001,AI Co-Mathematician: Accelerating Mathematicians with Agentic AI,Google DeepMind (Unknown — check arXiv),https://arxiv.org/abs/2605.06651
+0002,Evaluating Language Models for Harmful Manipulation,Google DeepMind (Unknown — check arXiv),https://arxiv.org/abs/2603.25326
+0003,How Controllable Are Large Language Models?,Unknown — check arXiv,https://arxiv.org/abs/2603.02578
+0004,Reverse CAPTCHA: Evaluating LLM Susceptibility to Invisible Unicode Instruction Injection,Unknown — check arXiv,https://arxiv.org/abs/2603.00164
+0005,AdapTime: Enabling Adaptive Temporal Reasoning in Large Language Models,Unknown — check arXiv,https://arxiv.org/abs/2604.24175
+0006,Try Check and Retry: A Divide-and-Conquer Framework for Boosting Long-context Tool-Calling Performance of LLMs,Unknown — check arXiv,https://arxiv.org/abs/2603.11495
+0007,FinRetrieval: A Benchmark for Financial Data Retrieval by AI Agents,Unknown — check arXiv,https://arxiv.org/abs/2603.04403
+0008,Behavioral Transfer in AI Agents: Evidence and Privacy Implications,Unknown — check arXiv,https://arxiv.org/abs/2604.19925
+0009,Large Language Models Explore by Latent Distilling,Unknown — check arXiv,https://arxiv.org/abs/2604.24927
+0010,Nemotron 3 Super: Open Efficient Mixture-of-Experts Hybrid Mamba-Transformer Model for Agentic Reasoning,NVIDIA (Unknown — check arXiv),https://arxiv.org/abs/2604.12374
+0011,Mamba-3: Improved Sequence Modeling Using State Space Principles,Unknown — check arXiv,https://arxiv.org/abs/2603.15569
+0012,GLM-5: From Vibe Coding to Agentic Engineering,Zhipu AI / GLM Team (Unknown — check arXiv),https://arxiv.org/abs/2602.15763
+0013,ERNIE 5.0 Technical Report,Baidu (Unknown — check arXiv),https://arxiv.org/abs/2602.04705
+0014,Arcee Trinity Large Technical Report,Arcee AI (Unknown — check arXiv),https://www.arxiv.org/abs/2602.17004
+0015,Step 3.5 Flash: Open Frontier-Level Intelligence with 11B Active Parameters,StepFun (Unknown — check arXiv),https://arxiv.org/abs/2602.10604
+0016,The Spike the Sparse and the Sink: Anatomy of Massive Activations and Attention Sinks,Unknown — check arXiv,https://arxiv.org/abs/2603.05498
+0017,Gated DeltaNet-2: Decoupling Erase and Write in Linear Attention,Unknown — check arXiv,https://arxiv.org/abs/2605.22791
+0018,Cola DLM: Continuous Latent Diffusion Language Model,ByteDance (Unknown — check arXiv),https://arxiv.org/abs/2605.06548
+0019,Symmetry in Language Statistics Shapes the Geometry of Model Representations,Unknown — check arXiv,https://arxiv.org/abs/2602.15029
+0020,To Defend Against Cyber Attacks We Must Teach AI Agents to Hack,Unknown — check arXiv,https://arxiv.org/abs/unknown
