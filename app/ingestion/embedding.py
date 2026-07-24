@@ -1,8 +1,9 @@
 from FlagEmbedding import BGEM3FlagModel
+from app.config import EMBEDDING_MODEL
 
 
 class Embedder:
-    def __init__(self, model_name: str = "BAAI/bge-m3", use_fp16: bool = True, batch_size: int = 16):
+    def __init__(self, model_name: str = EMBEDDING_MODEL, use_fp16: bool = True, batch_size: int = 16):
         self.model = BGEM3FlagModel(model_name, use_fp16=use_fp16)
         self.batch_size = batch_size
 

@@ -3,3 +3,4 @@
 .env
 /data/documents/*
 /app/ingestion/__pycache__
+/app/__pycache__

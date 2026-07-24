@@ -1,29 +1,25 @@
 from pathlib import Path
 import uuid
 import json
-import psycopg2
-from psycopg2.extras import execute_values
-from pgvector.psycopg2 import register_vector
-from loader import PDFLoader
-from chunking import TextChunker, Chunk
-from embedding import Embedder
 import os
-from dotenv import load_dotenv
+import sys
+from psycopg2.extras import execute_values
 
-load_dotenv()
+if __name__ == "__main__" and __package__ is None:
+    project_root = Path(__file__).resolve().parents[2]
+    sys.path.insert(0, str(project_root))
 
-DB_CONFIG = dict(
-    dbname=os.getenv("POSTGRES_DB", "ragdb"),
-    user=os.getenv("POSTGRES_USER", "postgres"),
-    password=os.getenv("POSTGRES_PASSWORD"),
-    host=os.getenv("DB_HOST", "localhost"),
-    port=os.getenv("DB_PORT", 5432),
-)
+from app.ingestion.loader import PDFLoader
+from app.ingestion.chunking import TextChunker, Chunk
+from app.ingestion.embedding import Embedder
+from app.config import CHUNK_SIZE, CHUNK_OVERLAP, EMBEDDING_MODEL
+from app.db import get_connection
+
 
 def load_and_chunk_pdf(
     pdf_path: str | Path,
-    chunk_size: int = 400,
-    chunk_overlap: int = 60,
+    chunk_size: int = CHUNK_SIZE,
+    chunk_overlap: int = CHUNK_OVERLAP,
 ) -> list[Chunk]:
     loader = PDFLoader()
     chunker = TextChunker(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
@@ -36,18 +32,12 @@ def load_and_chunk_pdf(
     return chunker.chunk_document(pages, doc_id=doc_id)
 
 
-def get_connection():
-    conn = psycopg2.connect(**DB_CONFIG)
-    register_vector(conn)
-    return conn
-
-
 def store_chunks(chunks: list[Chunk], vectors: list[list[float]]):
     if len(chunks) != len(vectors):
         raise RuntimeError("Embedding count mismatch with chunk count")
 
     rows = [
-        (chunk.content, json.dumps(chunk.metadata), vector)
+        (chunk.content, json.dumps({**chunk.metadata, "chunk_id": chunk.id}), vector)
         for chunk, vector in zip(chunks, vectors)
     ]
 
@@ -94,7 +84,7 @@ def ingest_directory(directory: str | Path, pattern: str = "*.pdf"):
         return
 
     print(f"Found {len(pdf_files)} PDF(s) in {directory}")
-    embedder = Embedder()  # load model once, reuse across all files
+    embedder = Embedder(model_name=EMBEDDING_MODEL)  # load model once, reuse across all files
 
     conn = get_connection()
     succeeded, skipped, failed = 0, 0, []
