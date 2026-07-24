@@ -48,6 +48,8 @@ class PDFLoader:
     @staticmethod
     def _clean_text(text: str) -> str:
         """Normalize whitespace artifacts from PDF extraction."""
+        # Strip NUL bytes — Postgres can't store them, and some PDFs embed them
+        text = text.replace("\x00", "")
         # Collapse repeated newlines from PDF layout artifacts
         text = re.sub(r"\n{3,}", "\n\n", text)
         # Fix hyphenated line-breaks: "informa-\ntion" -> "information"

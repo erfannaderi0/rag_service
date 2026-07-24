@@ -68,14 +68,58 @@ def store_chunks(chunks: list[Chunk], vectors: list[list[float]]):
         conn.close()
 
 
-def ingest_pdf(pdf_path: str):
+def ingest_pdf(pdf_path: str | Path, embedder: Embedder) -> int:
+    """Ingest a single PDF. Returns number of chunks stored."""
     chunks = load_and_chunk_pdf(pdf_path)
-    embedder = Embedder()
     vectors = embedder.embed([c.content for c in chunks])
     store_chunks(chunks, vectors)
-    print(f"Ingested {len(chunks)} chunks from {pdf_path}")
+    return len(chunks)
+
+
+def is_already_ingested(source_file: str, conn) -> bool:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT 1 FROM documents WHERE metadata->>'source_file' = %s LIMIT 1",
+            (source_file,)
+        )
+        return cur.fetchone() is not None
+
+
+def ingest_directory(directory: str | Path, pattern: str = "*.pdf"):
+    directory = Path(directory)
+    pdf_files = sorted(directory.glob(pattern))
+
+    if not pdf_files:
+        print(f"No PDFs found in {directory} matching {pattern}")
+        return
+
+    print(f"Found {len(pdf_files)} PDF(s) in {directory}")
+    embedder = Embedder()  # load model once, reuse across all files
+
+    conn = get_connection()
+    succeeded, skipped, failed = 0, 0, []
+    try:
+        for pdf_path in pdf_files:
+            if is_already_ingested(pdf_path.name, conn):
+                print(f"  ⏭ {pdf_path.name}: already ingested, skipping")
+                skipped += 1
+                continue
+            try:
+                n_chunks = ingest_pdf(pdf_path, embedder)
+                print(f"  ✓ {pdf_path.name}: {n_chunks} chunks")
+                succeeded += 1
+            except Exception as e:
+                print(f"  ✗ {pdf_path.name}: {e}")
+                failed.append(pdf_path.name)
+    finally:
+        conn.close()
+
+    print(f"\nDone: {succeeded} ingested, {skipped} skipped, {len(pdf_files) - succeeded - skipped} failed")
+    if failed:
+        print(f"Failed: {', '.join(failed)}")
 
 
 if __name__ == "__main__":
     import sys
-    ingest_pdf(sys.argv[1])
+    target = sys.argv[1] if len(sys.argv) > 1 else "data/documents"
+    ingest_directory(target)
