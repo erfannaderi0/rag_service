@@ -2,3 +2,4 @@
 /.env
 .env
 /data/documents/*
+/app/ingestion/__pycache__
