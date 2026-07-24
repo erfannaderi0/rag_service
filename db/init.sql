@@ -6,3 +6,6 @@ CREATE TABLE IF NOT EXISTS documents (
     metadata JSONB,
     embedding VECTOR(1024)
 );
+CREATE INDEX IF NOT EXISTS documents_embedding_idx
+ON documents
+USING hnsw (embedding vector_cosine_ops);
