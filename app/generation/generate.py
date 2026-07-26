@@ -10,6 +10,11 @@ from groq import Groq
 from app import config
 from app.retrieve import retrieve
 from app.generation.prompts import build_messages
+# app/generation/generate.py
+from tenacity import retry, stop_after_attempt, wait_exponential
+from app.utils import get_logger
+
+logger = get_logger(__name__)
 
 # Reads GROQ_API_KEY from the environment. Loaded once, not per call.
 _client = Groq()
@@ -21,6 +26,7 @@ _client = Groq()
 GENERATION_MODEL = getattr(config, "GENERATION_MODEL", "llama-3.3-70b-versatile")
 
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10))
 def call_llm(messages: list[dict], max_tokens: int = 1024) -> str:
     """
     Takes chat-style messages (see prompt.build_messages) and returns the

@@ -3,8 +3,15 @@ from pydantic import BaseModel
 
 from app import config
 from app.generation.generate import generate
+import logging
+
 
 app = FastAPI(title="RAG Service")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 
 
 class QueryRequest(BaseModel):

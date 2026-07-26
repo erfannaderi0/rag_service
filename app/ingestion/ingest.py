@@ -14,6 +14,9 @@ from app.ingestion.chunking import TextChunker, Chunk
 from app.ingestion.embedding import Embedder
 from app.config import CHUNK_SIZE, CHUNK_OVERLAP, EMBEDDING_MODEL
 from app.db import get_connection
+from app.utils import get_logger
+
+logger = get_logger(__name__)
 
 
 def load_and_chunk_pdf(
