@@ -12,7 +12,7 @@ submodule that ragas's LLM factory imports unconditionally, which breaks
 `import ragas` on a fresh install. Pin these versions to avoid it:
 
     pip install "ragas==0.2.15" "langchain_community==0.2.19" \
-                "langchain-groq==0.1.9" "langchain-core==0.2.43"
+                "langchain-core==0.2.43"
 
 Usage:
     python evaluation/run_ragas.py --input evaluation/golden_qa.jsonl
@@ -22,6 +22,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime, timezone
@@ -31,9 +32,10 @@ if __name__ == "__main__" and not __package__:
     project_root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(project_root))
 
+import pandas as pd
 from dotenv import load_dotenv
-from langchain_groq import ChatGroq
-from langchain_core.rate_limiters import InMemoryRateLimiter
+from langchain_openai import ChatOpenAI
+import httpx
 
 from ragas import EvaluationDataset, SingleTurnSample, evaluate
 from ragas.embeddings.base import BaseRagasEmbeddings
@@ -49,8 +51,7 @@ from app.ingestion.embedding import Embedder  # your self-hosted BGE-M3 wrapper
 
 load_dotenv()
 
-DEFAULT_JUDGE_MODEL = "llama-3.1-8b-instant"  # separate Groq quota bucket from the 70b generation
-# model -- also sidesteps same-model judge/generator bias as a free side effect
+DEFAULT_JUDGE_MODEL = "qwen2.5:7b-instruct-q4_K_M"
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +105,38 @@ def unwrap_error(e: Exception) -> str:
     return f"{type(e).__name__}: {e}"
 
 
+_DAILY_QUOTA_RE = re.compile(r"tokens per day|TPD", re.IGNORECASE)
+
+
+def is_daily_quota_error(msg: str) -> bool:
+    """True if this failure is a *daily* token-budget exhaustion (TPD) rather than a
+    transient per-minute/per-second rate limit. TPD errors won't clear on their own within
+    a run -- pacing (sleep/rate limiters) only helps with RPM/RPS limits, not this one. Once
+    you hit it, every subsequent call fails until the daily window resets, so the caller
+    should stop retrying immediately instead of burning through the rest of the golden set."""
+    return bool(_DAILY_QUOTA_RE.search(msg))
+
+
+def load_checkpoint(path: Path) -> dict[str, dict]:
+    """Load previously-completed pipeline results, keyed by question text, so a rerun after
+    hitting a daily quota can resume instead of starting over from question 1."""
+    if not path.exists():
+        return {}
+    done = {}
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                rec = json.loads(line)
+                done[rec["question"]] = rec
+    return done
+
+
+def append_checkpoint(path: Path, record: dict) -> None:
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
 def run_pipeline_on_question(question: str, top_k: int = 5) -> tuple[str, list[str]]:
     """Runs the actual retrieve -> generate pipeline. Returns (answer, retrieved_context_texts)."""
     retrieved = retrieve(question, top_k=top_k)  # adjust signature if yours differs
@@ -115,28 +148,67 @@ def run_pipeline_on_question(question: str, top_k: int = 5) -> tuple[str, list[s
 
 
 def build_evaluation_dataset(
-    golden_set: list[dict], top_k: int, pipeline_sleep: float
+    golden_set: list[dict], top_k: int, pipeline_sleep: float, checkpoint_path: Path
 ) -> tuple[EvaluationDataset, list[dict]]:
     samples = []
     run_records = []  # keep raw pipeline I/O alongside for the report
 
+    already_done = load_checkpoint(checkpoint_path)
+    if already_done:
+        print(f"Resuming: {len(already_done)} question(s) already completed in a prior run "
+              f"(loaded from {checkpoint_path})")
+
     for i, item in enumerate(golden_set, start=1):
         question = item["question"]
         reference = item["ground_truth"]
+
+        if question in already_done:
+            rec = already_done[question]
+            samples.append(
+                SingleTurnSample(
+                    user_input=rec["question"],
+                    response=rec["response"],
+                    retrieved_contexts=rec["retrieved_contexts"],
+                    reference=rec["reference"],
+                )
+            )
+            run_records.append(rec)
+            continue
+
         print(f"[{i}/{len(golden_set)}] running pipeline: {question[:80]}")
 
         try:
             answer, retrieved_contexts = run_pipeline_on_question(question, top_k=top_k)
         except Exception as e:
-            print(f"  [error] pipeline failed, skipping: {unwrap_error(e)}", file=sys.stderr)
+            err_msg = unwrap_error(e)
+            print(f"  [error] pipeline failed, skipping: {err_msg}", file=sys.stderr)
+            if is_daily_quota_error(err_msg):
+                # A daily token budget won't refill mid-run no matter how long we sleep --
+                # every remaining question would fail too. Stop now instead of grinding
+                # through the rest of the golden set on guaranteed failures; whatever
+                # succeeded so far is already saved to the checkpoint and can be resumed
+                # tomorrow (or once the quota resets) by rerunning with the same --checkpoint.
+                print(
+                    f"  [stopping] hit a daily token-quota limit ({i - 1}/{len(golden_set)} "
+                    f"done, {len(already_done)} loaded from checkpoint). Rerun later with the "
+                    f"same --checkpoint path to resume from here instead of question 1.",
+                    file=sys.stderr,
+                )
+                break
             continue
         finally:
-            # This loop is plain sequential Python calling call_llm() with no pacing of its
-            # own -- back-to-back calls will blow through Groq's free-tier RPM limit well
-            # before the golden set is exhausted (this is what caused the RateLimitErrors
-            # starting partway through your last run). Sleep every iteration, success or not.
+            # Sleep still matters for the per-minute (RPM) limit -- it just can't do
+            # anything about a per-day (TPD) one, which is why we also check above.
             time.sleep(pipeline_sleep)
 
+        record = {
+            "question": question,
+            "reference": reference,
+            "response": answer,
+            "retrieved_contexts": retrieved_contexts,
+            "chunk_id": item.get("chunk_id"),
+            "source_file": item.get("source_file"),
+        }
         samples.append(
             SingleTurnSample(
                 user_input=question,
@@ -145,16 +217,8 @@ def build_evaluation_dataset(
                 reference=reference,
             )
         )
-        run_records.append(
-            {
-                "question": question,
-                "reference": reference,
-                "response": answer,
-                "retrieved_contexts": retrieved_contexts,
-                "chunk_id": item.get("chunk_id"),
-                "source_file": item.get("source_file"),
-            }
-        )
+        run_records.append(record)
+        append_checkpoint(checkpoint_path, record)  # persist immediately, not just at the end
 
     return EvaluationDataset(samples=samples), run_records
 
@@ -209,6 +273,24 @@ def main():
              "generation model's TPD budget is exhausted, scoring can still proceed. Also avoids "
              "same-model judge/generator self-preference bias.",
     )
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        default=None,
+        help="Path to a JSONL checkpoint file for pipeline (retrieve+generate) results. If it "
+             "already contains a question, that question is loaded from disk instead of "
+             "re-running the pipeline -- lets you resume after hitting a daily token quota "
+             "without redoing already-completed questions. Defaults to "
+             "<output-dir>/pipeline_checkpoint.jsonl.",
+    )
+    parser.add_argument(
+        "--score-batch-size",
+        type=int,
+        default=20,
+        help="Score this many samples per RAGAS evaluate() call, writing a partial report after "
+             "each batch. Keeps a timeout, crash, or Ctrl+C from losing all scoring progress -- "
+             "only the in-progress batch is lost, not everything before it.",
+    )
     args = parser.parse_args()
 
     if not os.environ.get("GROQ_API_KEY"):
@@ -226,8 +308,10 @@ def main():
     golden_set = load_golden_set(input_path)
     print(f"Loaded {len(golden_set)} golden Q&A pairs from {input_path}")
 
+    checkpoint_path = Path(args.checkpoint) if args.checkpoint else output_dir / "pipeline_checkpoint.jsonl"
+
     dataset, run_records = build_evaluation_dataset(
-        golden_set, top_k=args.top_k, pipeline_sleep=args.pipeline_sleep
+        golden_set, top_k=args.top_k, pipeline_sleep=args.pipeline_sleep, checkpoint_path=checkpoint_path
     )
     if len(dataset) == 0:
         print("No samples survived pipeline execution -- nothing to score.", file=sys.stderr)
@@ -236,50 +320,85 @@ def main():
     print(f"\nScoring {len(dataset)} samples with RAGAS "
           f"(judge model: {args.judge_model})...\n")
 
-    # NOTE: using the same model family (Groq/Llama) as both the generation
-    # backend and the RAGAS judge risks self-preference bias -- the judge may
-    # rate outputs from its own model family more favorably. Swap judge_llm
-    # for a different provider (e.g. Anthropic) if you want an independent
-    # check; that's a one-line change here.
-    #
-    # A real rate limiter, not just a worker cap: max_workers only bounds how many calls run
-    # concurrently, not how many happen per minute -- a fast-returning call frees its slot
-    # immediately and the next one fires right away, which is how the previous run blew through
-    # Groq's free-tier RPM limit even at max_workers=2. InMemoryRateLimiter enforces an actual
-    # sustained requests/second ceiling regardless of how fast individual calls complete.
-    rate_limiter = InMemoryRateLimiter(
-        requests_per_second=args.requests_per_second,
-        check_every_n_seconds=0.1,
-        max_bucket_size=1,  # no burst allowance -- smooth, steady pacing
-    )
     judge_llm = LangchainLLMWrapper(
-        ChatGroq(model=args.judge_model, api_key=os.environ["GROQ_API_KEY"], rate_limiter=rate_limiter)
+        ChatOpenAI(
+            model=args.judge_model,
+            base_url="http://localhost:11434/v1",
+            api_key="ollama",  # any non-empty string; Ollama ignores it
+            temperature=0,
+        )
     )
+
     embeddings = BGEEmbeddingsAdapter()
 
     metrics = [Faithfulness(), AnswerRelevancy(), LLMContextPrecisionWithReference()]
 
-    # max_workers still caps concurrency (so retries/backoff don't pile up chaotically), but the
-    # rate_limiter above is what actually prevents hitting Groq's RPM ceiling in the first place.
     run_config = RunConfig(max_workers=args.max_workers, max_retries=15, max_wait=90, timeout=300)
 
-    result = evaluate(
-        dataset=dataset,
-        metrics=metrics,
-        llm=judge_llm,
-        embeddings=embeddings,
-        run_config=run_config,
-        raise_exceptions=False,  # log per-sample failures as NaN instead of aborting the run
-    )
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    partial_json_path = output_dir / f"ragas_report_{timestamp}.partial.json"
 
-    df = result.to_pandas()
+    # Score in batches rather than one evaluate() call over the whole dataset. Each metric
+    # makes several sequential judge-LLM calls per sample, so a full run can take well over
+    # an hour -- a timeout, crash, or Ctrl+C partway through previously meant losing every
+    # score, not just the in-progress batch. Writing a partial report after each batch means
+    # only the current batch's work is at risk.
+    all_samples = dataset.samples
+    batch_size = max(1, args.score_batch_size)
+    df_batches = []
+
+    # Warm up the model so the first real judge call doesn't race a cold model load
+    httpx.post(
+        "http://localhost:11434/api/generate",
+        json={"model": args.judge_model, "prompt": "hi", "stream": False},
+        timeout=120,
+    )
+    
+    for start in range(0, len(all_samples), batch_size):
+        batch = all_samples[start : start + batch_size]
+        batch_num = start // batch_size + 1
+        total_batches = (len(all_samples) + batch_size - 1) // batch_size
+        print(f"\n--- scoring batch {batch_num}/{total_batches} ({len(batch)} samples) ---")
+
+        result = evaluate(
+            dataset=EvaluationDataset(samples=batch),
+            metrics=metrics,
+            llm=judge_llm,
+            embeddings=embeddings,
+            run_config=run_config,
+            raise_exceptions=False,  # log per-sample failures as NaN instead of aborting the run
+        )
+        batch_df = result.to_pandas()
+        df_batches.append(batch_df)
+
+        # Merge in raw pipeline I/O for traceability so far, and write a partial report --
+        # if the next batch fails or the run is interrupted, this file still has everything
+        # scored up to this point instead of nothing at all.
+        partial_df = pd.concat(df_batches, ignore_index=True)
+        for col in ("chunk_id", "source_file"):
+            partial_df[col] = [r.get(col) for r in run_records[: len(partial_df)]]
+        with open(partial_json_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "timestamp": timestamp,
+                    "judge_model": args.judge_model,
+                    "batches_completed": batch_num,
+                    "total_batches": total_batches,
+                    "num_samples_scored": len(partial_df),
+                    "per_sample": json.loads(partial_df.to_json(orient="records")),
+                },
+                f,
+                indent=2,
+                ensure_ascii=False,
+            )
+
+    df = pd.concat(df_batches, ignore_index=True)
 
     # Merge in the raw pipeline I/O (question/response/contexts) for traceability,
     # since `df` from ragas only guarantees the sample fields + scores.
     for col in ("chunk_id", "source_file"):
         df[col] = [r.get(col) for r in run_records[: len(df)]]
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     csv_path = output_dir / f"ragas_report_{timestamp}.csv"
     json_path = output_dir / f"ragas_report_{timestamp}.json"
     latest_json_path = output_dir / "ragas_report_latest.json"
