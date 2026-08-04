@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+from pathlib import Path
+import sys
+if __name__ == "__main__" and __package__ is None:
+    project_root = Path(__file__).resolve().parents[2]
+    sys.path.insert(0, str(project_root))
+
 import tiktoken
 import re
 import uuid
 from loader import PageContent
 from dataclasses import dataclass, field
-from loader import PageContent
+from app.ingestion.loader import PageContent
 
 
 @dataclass

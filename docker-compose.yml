@@ -12,6 +12,44 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    container_name: rag_app
+    restart: always
+    env_file:
+      - .env
+    environment:
+      DB_HOST: postgres   # override any localhost default with the compose service name
+    ports:
+      - "8000:8000"
+    volumes:
+      - C:/Users/ERFAN/.cache/huggingface:/root/.cache/huggingface
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  ingest:
+    build: .
+    container_name: rag_ingest
+    env_file:
+      - .env
+    environment:
+      DB_HOST: postgres
+    volumes:
+      - C:/Users/ERFAN/.cache/huggingface:/root/.cache/huggingface
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["python", "-m", "app.ingestion.ingest", "data/documents"]
+    profiles:
+      - tools   # doesn't start with "docker compose up"; run on demand, see README
 
 volumes:
   pgdata:
+  hf_cache:
