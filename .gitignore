@@ -4,3 +4,5 @@
 /data/documents/*
 **/__pycache__/
 evaluation/reports/others
+*.egg-info/
+.venv311
