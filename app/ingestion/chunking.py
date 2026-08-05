@@ -9,7 +9,6 @@ if __name__ == "__main__" and __package__ is None:
 import tiktoken
 import re
 import uuid
-from loader import PageContent
 from dataclasses import dataclass, field
 from app.ingestion.loader import PageContent
 
