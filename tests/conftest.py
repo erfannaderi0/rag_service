@@ -75,18 +75,16 @@ if not RUN_INTEGRATION and "FlagEmbedding" not in sys.modules:
 # logic can be tested deterministically, independent of tiktoken's actual
 # BPE. (chunk_size/chunk_overlap in the chunking tests are chosen assuming
 # 1 token == 1 whitespace-split word, since that's what this stub counts.)
-if not RUN_INTEGRATION:
-    import tiktoken
+import tiktoken
 
-    class _StubTiktokenEncoding:
-        def encode(self, text):
-            return text.split()
+class _StubTiktokenEncoding:
+    def encode(self, text):
+        return text.split()
 
-        def decode(self, tokens):
-            return " ".join(tokens)
+    def decode(self, tokens):
+        return " ".join(tokens)
 
-    tiktoken.get_encoding = lambda encoding_name: _StubTiktokenEncoding()
-
+tiktoken.get_encoding = lambda encoding_name: _StubTiktokenEncoding()
 
 def pytest_addoption(parser):
     parser.addoption(
