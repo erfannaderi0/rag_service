@@ -9,6 +9,7 @@ POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", 5432)
 API_KEY = os.getenv("GROQ_API_KEY")
+NEON_DATABASE_URL = os.getenv("NEON_DATABASE_URL")
 
 CHUNK_SIZE = 400
 CHUNK_OVERLAP = 60
