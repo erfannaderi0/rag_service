@@ -5,10 +5,28 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# System packages needed to build/run some Python libs (psycopg2, fitz, torch)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libpq-dev \
+# System packages: just curl at this point.
+# build-essential and libpq-dev were removed — every Python dependency in
+# requirements.txt (psycopg2-binary, pymupdf, tiktoken, transformers) ships
+# prebuilt wheels, and torch is installed from PyTorch's prebuilt CPU wheel
+# index below, so nothing here actually needs to compile from source.
+# This also sidesteps the gcc-14 download failures entirely, since gcc is
+# never installed.
+#
+# Notes on the flags below (kept as a safety net for flaky/VPN connections,
+# even though curl alone is a small, fast download):
+# - Debian trixie (the base of python:3.11-slim) uses the new deb822 sources
+#   format in /etc/apt/sources.list.d/debian.sources, not sources.list.
+#   We point it at a German mirror (ftp.de.debian.org) instead of the
+#   anycast deb.debian.org, which routes to whichever CDN edge is "closest"
+#   and can be inconsistent over a VPN.
+# - Acquire::ForceIPv4=true avoids IPv6-over-VPN connections dying mid-download.
+# - Acquire::Retries and http::Timeout give apt more patience before giving up.
+RUN sed -i 's/deb.debian.org/ftp.de.debian.org/g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    -o Acquire::Retries=5 \
+    -o Acquire::http::Timeout=60 \
+    -o Acquire::ForceIPv4=true \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
